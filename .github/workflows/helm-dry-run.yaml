@@ -1,0 +1,78 @@
+name: Helm Dry Run
+
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  helm-dry-run:
+    name: Helm Dry Run
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      with:
+        submodules: recursive
+        persist-credentials: false
+
+    - name: Set up Helm
+      uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2  # v5.0.0
+      with:
+        version: v3.17.0
+
+    - name: Create Kind cluster
+      uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc  # v1
+      with:
+        cluster_name: helm-dry-run
+
+    - name: Install CRDs
+      run: |
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.17.1/cert-manager.crds.yaml
+
+    - name: Build chart dependencies
+      run: helm dependency build charts/osac/
+
+    - name: Dry run with default values
+      run: |
+        echo "--- helm install --dry-run with default values.yaml ---"
+        helm install osac charts/osac/ \
+          --namespace osac \
+          --create-namespace \
+          --dry-run \
+          --set service.externalHostname=fulfillment-api.example.com \
+          --set service.internalHostname=fulfillment-internal-api.example.com \
+          > /dev/null
+
+    - name: Dry run with CI values
+      run: |
+        set -euo pipefail
+        for f in charts/osac/ci/*-values.yaml; do
+          echo "--- helm install --dry-run with $(basename "$f") ---"
+          helm install osac charts/osac/ \
+            --namespace osac \
+            --create-namespace \
+            --dry-run \
+            --values "$f" \
+            --set service.externalHostname=fulfillment-api.example.com \
+            --set service.internalHostname=fulfillment-internal-api.example.com \
+            > /dev/null
+        done
+
+    - name: Dry run with environment values
+      run: |
+        set -euo pipefail
+        for f in values/*/values.yaml; do
+          env_name="$(basename "$(dirname "$f")")"
+          echo "--- helm install --dry-run with ${env_name} ---"
+          helm install osac charts/osac/ \
+            --namespace osac \
+            --create-namespace \
+            --dry-run \
+            --values "$f" \
+            --set service.externalHostname=fulfillment-api.example.com \
+            --set service.internalHostname=fulfillment-internal-api.example.com \
+            > /dev/null
+        done
